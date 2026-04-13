@@ -121,33 +121,127 @@ def ai_explain(prompt):
 
 def compute_health(network, ports, cves):
     score = 100
-    issues = []
-    good = []
+    items = []
+
+    # VPN check
     if not network.get("vpn"):
         score -= 15
-        issues.append({"text": "VPN is off", "detail": "Your internet traffic is not encrypted. Anyone on the same network can potentially see what you are doing online.", "action": "Turn on a VPN app like ProtonVPN or Mullvad to encrypt your traffic."})
+        items.append({
+            "id": "vpn",
+            "severity": "high",
+            "emoji": "🔓",
+            "title": "Your internet is not private",
+            "simple": "Anyone on the same WiFi as you could potentially see your internet activity.",
+            "technical": "No VPN tunnel detected. Network traffic is unencrypted and vulnerable to MITM attacks on untrusted networks.",
+            "action_simple": "Download a VPN app like ProtonVPN (free) and turn it on.",
+            "action_technical": "Deploy WireGuard or OpenVPN. Verify tunnel with: curl ifconfig.me",
+            "status": "issue"
+        })
     else:
-        good.append({"text": "VPN is active", "detail": "Your internet traffic is encrypted and private."})
-    high_risk_ports = [p for p in ports if p.get("risk") == "high"]
-    if high_risk_ports:
-        score -= 10 * len(high_risk_ports)
-        for p in high_risk_ports:
-            issues.append({"text": f"High-risk port open: {p['port']} ({p['name']})", "detail": p["explain"], "action": f"Close port {p['port']} if you do not need it running."})
-    else:
-        good.append({"text": "No high-risk ports open", "detail": "None of your open ports pose an immediate security risk."})
+        items.append({
+            "id": "vpn",
+            "severity": "low",
+            "emoji": "🔒",
+            "title": "VPN is active",
+            "simple": "Your internet traffic is encrypted and private.",
+            "technical": "VPN tunnel detected via utun interface. Traffic is encrypted end-to-end.",
+            "action_simple": None,
+            "action_technical": None,
+            "status": "good"
+        })
+
+    # Port checks
+    high_ports = [p for p in ports if p.get("risk") == "high"]
+    medium_ports = [p for p in ports if p.get("risk") == "medium"]
+    if high_ports:
+        score -= 10 * len(high_ports)
+        for p in high_ports:
+            items.append({
+                "id": f"port_{p['port']}",
+                "severity": "critical",
+                "emoji": "⚠️",
+                "title": f"Dangerous port open: {p['name']}",
+                "simple": f"A door called port {p['port']} is open on your computer that could let hackers in.",
+                "technical": f"Port {p['port']} ({p['name']}) is in LISTEN state. {p['explain']} Process: {p['process']}",
+                "action_simple": f"If you are not using {p['name']}, close it in your settings or firewall.",
+                "action_technical": f"Run: sudo lsof -i :{p['port']} to identify process. Use: sudo pfctl or launchctl to disable.",
+                "status": "issue"
+            })
+    if medium_ports:
+        for p in medium_ports:
+            items.append({
+                "id": f"port_med_{p['port']}",
+                "severity": "medium",
+                "emoji": "👁️",
+                "title": f"Port worth monitoring: {p['name']} ({p['port']})",
+                "simple": f"Port {p['port']} is open. It is not dangerous but worth knowing about.",
+                "technical": f"Port {p['port']} ({p['name']}) is open. {p['explain']}",
+                "action_simple": "No immediate action needed, but check periodically.",
+                "action_technical": f"Monitor with: sudo lsof -i :{p['port']}",
+                "status": "warn"
+            })
+    if not high_ports:
+        items.append({
+            "id": "ports_safe",
+            "severity": "low",
+            "emoji": "✅",
+            "title": "No dangerous ports open",
+            "simple": "None of the services running on your computer pose an immediate security risk.",
+            "technical": f"{len(ports)} ports in LISTEN state. No high-risk services detected.",
+            "action_simple": None,
+            "action_technical": None,
+            "status": "good"
+        })
+
+    # CVE check
     if cves:
         score -= min(20, len(cves) * 3)
-        issues.append({"text": f"{len(cves)} critical vulnerabilities published this week", "detail": "New security flaws discovered in widely used software. Keep everything updated.", "action": "Keep all your apps, operating system, and firmware up to date."})
+        top_cve = cves[0]
+        items.append({
+            "id": "cves",
+            "severity": "high",
+            "emoji": "🚨",
+            "title": f"{len(cves)} critical security flaws discovered this week",
+            "simple": "Researchers found serious security holes in popular software. If you use affected apps and have not updated them, you could be at risk.",
+            "technical": f"{len(cves)} CRITICAL CVEs published in past 48h. Highest score: {top_cve['score']} ({top_cve['id']}). Attack surface unknown without device correlation.",
+            "action_simple": "Update all your apps, your Mac system, and any router or smart home devices.",
+            "action_technical": "Check: softwareupdate --list. Review CVE details in Threats tab. Cross-reference with device inventory.",
+            "status": "issue"
+        })
     else:
-        good.append({"text": "No new critical threats this week", "detail": "No critical vulnerabilities published in the past 48 hours."})
+        items.append({
+            "id": "cves_safe",
+            "severity": "low",
+            "emoji": "✅",
+            "title": "No new critical threats this week",
+            "simple": "No major security vulnerabilities have been published in the past 48 hours.",
+            "technical": "NVD query returned 0 CRITICAL CVEs in past 48h window.",
+            "action_simple": None,
+            "action_technical": None,
+            "status": "good"
+        })
+
     score = max(0, min(100, score))
+    issues = [i for i in items if i["status"] == "issue"]
+    warns = [i for i in items if i["status"] == "warn"]
+    good = [i for i in items if i["status"] == "good"]
+
     if score >= 80:
         grade_label = "Good"; grade_msg = "Your network looks healthy."
     elif score >= 55:
         grade_label = "Fair"; grade_msg = "A few things to keep an eye on."
     else:
         grade_label = "At Risk"; grade_msg = "Some issues need your attention."
-    return {"score": score, "grade_label": grade_label, "grade_msg": grade_msg, "issues": issues, "good": good}
+
+    return {
+        "score": score,
+        "grade_label": grade_label,
+        "grade_msg": grade_msg,
+        "items": items,
+        "issues": issues,
+        "warns": warns,
+        "good": good
+    }
 
 @app.route("/api/data")
 def api_data():
@@ -241,6 +335,33 @@ def check_password():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
+@app.route("/api/briefing")
+def get_briefing():
+    network = get_network_info()
+    ports = get_open_ports()
+    cves = get_cves()
+    devices = get_devices()
+    health = compute_health(network, ports, cves)
+
+    issue_count = len(health["issues"])
+    if issue_count == 0:
+        briefing_instruction = "Tell them everything looks good in one short friendly sentence. Like texting a friend."
+    elif issue_count == 1:
+        briefing_instruction = "Tell them there is one thing to fix. One sentence saying what it is. One sentence saying what to do. Simple words only."
+    else:
+        briefing_instruction = f"Tell them there are {issue_count} things to fix. One sentence on the most urgent one. One sentence on what to do first. Simple words only."
+
+    prompt = f"""You are a friendly security assistant texting someone who knows nothing about technology.
+{briefing_instruction}
+No jargon. No corporate speak. Max 2 sentences. Write like you are talking to your grandmother.
+Score: {health["score"]}/100, VPN: {"on" if network.get("vpn") else "OFF - not protected"}, Issues: {issue_count}, CVEs this week: {len(cves)}"""
+
+    briefing = ai_explain(prompt)
+    if not briefing:
+        briefing = f"Your security score is {health['score']}/100. " + (health["grade_msg"])
+    return jsonify({"briefing": briefing, "score": health["score"], "grade": health["grade_label"]})
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
@@ -410,6 +531,14 @@ footer{border-top:1px solid var(--bd);padding:14px 28px;display:flex;justify-con
     <button class="tab" onclick="switchTab('password')">Password Check</button>
   </div>
   <div id="tab-overview" class="tab-content active">
+    <div id="ai-briefing" style="background:linear-gradient(135deg,rgba(41,151,255,0.08),rgba(41,151,255,0.03));border:1px solid rgba(41,151,255,0.2);border-radius:16px;padding:18px 22px;margin-bottom:20px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);margin-bottom:8px">Today&#39;s Briefing from Argus</div>
+      <div id="briefing-text" style="font-size:14px;color:var(--t1);line-height:1.6"><span class="spin">&#9696;</span> Generating your daily briefing...</div>
+    </div>
+    <div id="mode-toggle" style="display:flex;gap:8px;margin-bottom:16px">
+      <button id="mode-simple" onclick="setMode('simple')" style="flex:1;padding:8px;border-radius:10px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--blue);background:rgba(41,151,255,0.15);color:var(--blue);font-family:inherit">Simple View</button>
+      <button id="mode-technical" onclick="setMode('technical')" style="flex:1;padding:8px;border-radius:10px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-family:inherit">Technical View</button>
+    </div>
     <div id="status-items"></div>
   </div>
   <div id="tab-network" class="tab-content">
@@ -501,10 +630,11 @@ function loadAll(){
     var c=scoreColor(d.health.score);
     var radius=34,circ=2*Math.PI*radius,offset=circ-(d.health.score/100)*circ;
     document.getElementById('health-wrap').innerHTML='<div class="health-card"><div class="score-ring"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="'+radius+'"/><circle class="fill" cx="40" cy="40" r="'+radius+'" stroke="'+c+'" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"/></svg><div class="score-num" style="color:'+c+'">'+d.health.score+'</div></div><div class="health-text"><h2>'+d.health.grade_label+'</h2><p>'+d.health.grade_msg+'</p></div></div>';
-    var sl='';
-    d.health.issues.forEach(function(i){sl+='<div class="status-item"><div class="si-icon">&#9888;</div><div class="si-body"><div class="si-title">'+i.text+'</div><div class="si-detail">'+i.detail+'</div><div class="si-action">What to do: '+i.action+'</div></div></div>';});
-    d.health.good.forEach(function(g){sl+='<div class="status-item si-good"><div class="si-icon">&#10003;</div><div class="si-body"><div class="si-title">'+g.text+'</div><div class="si-detail">'+g.detail+'</div></div></div>';});
-    document.getElementById('status-items').innerHTML=sl;
+    renderOverview(d.health);
+    // Load briefing
+    fetch('/api/briefing').then(function(r){return r.json();}).then(function(b){
+      document.getElementById('briefing-text').textContent=b.briefing;
+    }).catch(function(){document.getElementById('briefing-text').textContent='Your security score is '+d.health.score+'/100. '+d.health.grade_msg;});
     document.getElementById('net-info').innerHTML='<div class="row"><span class="rk">Wi-Fi</span><span class="rv">'+d.network.wifi+'</span></div><div class="row"><span class="rk">Local IP</span><span class="rv">'+d.network.local_ip+'</span></div><div class="row"><span class="rk">Public IP</span><span class="rv">'+d.network.public_ip+'</span></div><div class="row"><span class="rk">VPN</span><span class="rv '+(d.network.vpn?'vpn-on':'vpn-off')+'">'+(d.network.vpn?'Active':'Off')+'</span></div>';
     if(!d.ports.length){document.getElementById('port-info').innerHTML='<div class="loading">No open ports</div>';}
     else{var ph='';d.ports.forEach(function(p){var bc=p.risk==='high'?'b-red':p.risk==='medium'?'b-orange':'b-green';var bl=p.risk==='high'?'High Risk':p.risk==='medium'?'Monitor':'Safe';ph+='<div class="port-row"><div class="port-left"><div class="port-num">'+p.port+' <span style="color:var(--t2);font-weight:400">'+(p.name||p.process)+'</span></div><div class="port-explain">'+p.explain+'</div></div><span class="badge '+bc+'">'+bl+'</span></div>';});document.getElementById('port-info').innerHTML=ph;}
@@ -524,6 +654,52 @@ function loadAll(){
     document.getElementById('upd').textContent='Updated '+new Date().toLocaleTimeString();
   }).catch(function(e){console.error(e);});
 }
+
+var currentMode = 'simple';
+function setMode(mode){
+  currentMode = mode;
+  document.getElementById('mode-simple').style.background = mode==='simple'?'rgba(41,151,255,0.15)':'var(--s1)';
+  document.getElementById('mode-simple').style.color = mode==='simple'?'var(--blue)':'var(--t2)';
+  document.getElementById('mode-simple').style.borderColor = mode==='simple'?'var(--blue)':'var(--bd)';
+  document.getElementById('mode-technical').style.background = mode==='technical'?'rgba(41,151,255,0.15)':'var(--s1)';
+  document.getElementById('mode-technical').style.color = mode==='technical'?'var(--blue)':'var(--t2)';
+  document.getElementById('mode-technical').style.borderColor = mode==='technical'?'var(--blue)':'var(--bd)';
+  if(DATA.health) renderOverview(DATA.health);
+}
+function renderOverview(health){
+  var items = health.items || [];
+  var sl='';
+  // Issues first (sorted by severity)
+  var order = {critical:0, high:1, medium:2, low:3};
+  items.sort(function(a,b){return (order[a.severity]||3)-(order[b.severity]||3);});
+  items.forEach(function(item){
+    var isIssue = item.status==='issue';
+    var isWarn = item.status==='warn';
+    var isGood = item.status==='good';
+    var borderColor = isIssue?'rgba(255,69,58,.25)':isWarn?'rgba(255,159,10,.2)':'rgba(48,209,88,.15)';
+    var titleColor = isIssue?'var(--red)':isWarn?'var(--orange)':isGood?'var(--green)':'var(--t1)';
+    var desc = currentMode==='simple' ? item.simple : item.technical;
+    var action = currentMode==='simple' ? item.action_simple : item.action_technical;
+    sl+='<div style="background:var(--s1);border:1px solid '+borderColor+';border-radius:14px;padding:14px 18px;margin-bottom:10px">';
+    sl+='<div style="display:flex;align-items:flex-start;gap:10px">';
+    sl+='<span style="font-size:18px;flex-shrink:0;margin-top:1px">'+item.emoji+'</span>';
+    sl+='<div style="flex:1">';
+    sl+='<div style="font-size:14px;font-weight:500;color:'+titleColor+';margin-bottom:4px">'+item.title+'</div>';
+    sl+='<div style="font-size:13px;color:var(--t2);line-height:1.5;margin-bottom:'+(action?'8px':'0')+'px">'+desc+'</div>';
+    if(action){
+      sl+='<div style="font-size:12px;color:var(--blue);font-weight:500">'+( currentMode==="simple"?"What to do: ":"Technical fix: ")+action+'</div>';
+    }
+    sl+='</div>';
+    if(currentMode==="technical"){
+      var badge = item.severity==="critical"?"CRITICAL":item.severity==="high"?"HIGH":item.severity==="medium"?"MEDIUM":"LOW";
+      var bc = item.severity==="critical"||item.severity==="high"?"b-red":item.severity==="medium"?"b-orange":"b-green";
+      sl+='<span class="badge '+bc+'" style="flex-shrink:0;margin-top:2px">'+badge+'</span>';
+    }
+    sl+='</div></div>';
+  });
+  document.getElementById('status-items').innerHTML=sl;
+}
+
 function explainDevice(idx){
   var box=document.getElementById('dai-'+idx);
   if(box.style.display==='block'){box.style.display='none';return;}
