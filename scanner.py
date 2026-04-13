@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SentinelDash — Phase 2
+Argus — Phase 2
 Network Scanner
 Author: Aryan Khanna, Purdue University
 
@@ -127,7 +127,7 @@ def get_vendor(mac):
     try:
         mac_prefix = mac.replace(":", "").upper()[:6]
         url = f"https://api.macvendors.com/{urllib.parse.quote(mac)}"
-        req = urllib.request.Request(url, headers={"User-Agent": "SentinelDash/2.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Argus/2.0"})
         with urllib.request.urlopen(req, timeout=3) as r:
             vendor = r.read().decode().strip()
             return vendor[:30] if vendor else "Unknown"

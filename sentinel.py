@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SentinelDash — Phase 1
+Argus — Phase 1
 Personal Mac Security Dashboard
 Author: Aryan Khanna, Purdue University
 
@@ -162,7 +162,7 @@ def get_recent_cves(limit=8):
             f"resultsPerPage={limit}"
         )
 
-        req = urllib.request.Request(url, headers={"User-Agent": "SentinelDash/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Argus/1.0"})
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode())
 

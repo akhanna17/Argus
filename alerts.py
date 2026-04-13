@@ -53,7 +53,7 @@ def fetch_cves():
            f"pubStartDate={urllib.parse.quote(start.strftime('%Y-%m-%dT%H:%M:%S.000'))}&"
            f"pubEndDate={urllib.parse.quote(end.strftime('%Y-%m-%dT%H:%M:%S.000'))}&"
            f"cvssV3Severity=CRITICAL&resultsPerPage=10")
-    req = urllib.request.Request(url, headers={"User-Agent": "SentinelDash/3.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Argus/3.0"})
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.loads(r.read().decode())
     cves = []
@@ -73,13 +73,13 @@ def fetch_cves():
 
 def send_alert(cve, explanation):
     payload = json.dumps({
-        "username": "SentinelDash",
+        "username": "Argus",
         "embeds": [{
             "title": f"🚨 {cve['id']} — Score: {cve['score']}/10",
             "description": f"**Plain English Summary:**\n{explanation}\n\n**Technical Details:**\n{cve['description'][:200]}...",
             "color": 16711680,
             "url": cve["url"],
-            "footer": {"text": "SentinelDash • Powered by NVD + Llama 3.2"}
+            "footer": {"text": "Argus • Powered by NVD + Llama 3.2"}
         }]
     }).encode()
     req = urllib.request.Request(WEBHOOK_URL, data=payload,
@@ -89,7 +89,7 @@ def send_alert(cve, explanation):
         return r.status == 204
 
 seen = load_seen()
-print(f"🛡  SentinelDash CVE Alerts — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"🛡  Argus CVE Alerts — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 cves = fetch_cves()
 new_cves = [c for c in cves if c["id"] not in seen]
 print(f"Found {len(cves)} critical CVEs, {len(new_cves)} new")

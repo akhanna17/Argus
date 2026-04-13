@@ -1,4 +1,4 @@
-# 🛡️ SentinelDash
+# 🛡️ Argus
 
 > Your personal Mac security dashboard. Know what's on your network, whether your VPN is holding, and what threats are trending — all in one place.
 
@@ -6,7 +6,7 @@
 
 ## What It Does
 
-SentinelDash is a personal security monitoring tool built for your Mac. It runs in your terminal (and eventually as a web UI) and gives you a live view of:
+Argus is a personal security monitoring tool built for your Mac. It runs in your terminal (and eventually as a web UI) and gives you a live view of:
 
 - **Network Map** — Every device currently on your WiFi, with hostname, IP, and MAC address
 - **VPN Status** — Whether your VPN is actually active or silently dropped
@@ -43,8 +43,8 @@ SentinelDash is a personal security monitoring tool built for your Mac. It runs 
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/sentineldash.git
-cd sentineldash
+git clone https://github.com/YOUR_USERNAME/argus.git
+cd argus
 
 # Install dependencies
 pip install -r requirements.txt

@@ -1,4 +1,4 @@
-# SentinelDash — Project Roadmap
+# Argus — Project Roadmap
 
 ## Phase 1 ✅ — Terminal Dashboard (You are here)
 **Goal:** Get something on screen that looks impressive and is actually useful.

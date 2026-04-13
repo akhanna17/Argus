@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SentinelDash — Device CVE Matcher
+Argus — Device CVE Matcher
 Scans your network, matches devices to known CVEs, sends personalized Discord alerts.
 Author: Aryan Khanna, Purdue University
 """
@@ -66,7 +66,7 @@ def get_vendor(mac):
     try:
         req = urllib.request.Request(
             f"https://api.macvendors.com/{urllib.parse.quote(mac)}",
-            headers={"User-Agent": "SentinelDash/1.0"}
+            headers={"User-Agent": "Argus/1.0"}
         )
         with urllib.request.urlopen(req, timeout=3) as r:
             return r.read().decode().strip()[:40]
@@ -103,7 +103,7 @@ def search_cves_for_device(vendor, hostname):
                    f"keywordSearch={urllib.parse.quote(keyword)}&"
                    f"cvssV3Severity=CRITICAL&"
                    f"resultsPerPage=3")
-            req = urllib.request.Request(url, headers={"User-Agent": "SentinelDash/4.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Argus/4.0"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
 
@@ -186,7 +186,7 @@ def send_device_alert(device, cve, explanation):
         color = 0xFF0000
 
     payload = json.dumps({
-        "username": "SentinelDash",
+        "username": "Argus",
         "embeds": [{
             "title": f"⚠️ Device on Your Network is Vulnerable",
             "description": (
@@ -195,7 +195,7 @@ def send_device_alert(device, cve, explanation):
                 f"**What this means:**\n{explanation}"
             ),
             "color": color,
-            "footer": {"text": f"SentinelDash Device Scanner • {datetime.now().strftime('%b %d %Y %H:%M')}"}
+            "footer": {"text": f"Argus Device Scanner • {datetime.now().strftime('%b %d %Y %H:%M')}"}
         }]
     }).encode()
 
@@ -212,7 +212,7 @@ def send_device_alert(device, cve, explanation):
 # ─────────────────────────────────────────────
 
 def run():
-    print(f"\n🛡  SentinelDash Device CVE Matcher — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n🛡  Argus Device CVE Matcher — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("─" * 55)
 
     seen = load_seen()
