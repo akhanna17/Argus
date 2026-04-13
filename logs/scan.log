@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/aryankhanna/Desktop/argus/device_monitor.py", line 13, in <module>
+    from scapy.all import ARP, Ether, srp
+ModuleNotFoundError: No module named 'scapy'

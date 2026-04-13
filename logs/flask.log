@@ -1,0 +1,20 @@
+
+  Argus Security Monitor
+  http://localhost:5001
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://10.186.121.192:5001
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [13/Apr/2026 17:03:14] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:03:16] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:03:18] "POST /api/explain/network HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:04:15] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:04:18] "POST /api/explain/network HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:05:16] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:05:18] "POST /api/explain/network HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:05:59] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:06:00] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [13/Apr/2026 17:06:02] "POST /api/explain/network HTTP/1.1" 200 -

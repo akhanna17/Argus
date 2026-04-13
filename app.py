@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-from flask import Flask, jsonify, render_template_string
-import subprocess, socket, json, os, urllib.request, urllib.parse
+from flask import Flask, jsonify, render_template_string, request
+import subprocess, socket, json, os, urllib.request, urllib.parse, hashlib
 from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
-DEVICES_FILE = "/tmp/argus_devices.json"
+ARGUS_DIR = os.path.expanduser("~/Desktop/argus")
+DATA_DIR = os.path.join(ARGUS_DIR, "data")
+DEVICES_FILE = os.path.join(DATA_DIR, "devices.json")
 
 def get_network_info():
     try:
@@ -43,16 +45,16 @@ def get_open_ports():
         result = subprocess.run(["lsof", "-i", "-n", "-P"], capture_output=True, text=True, timeout=10)
         ports = {}
         risk_map = {
-            "22": {"name": "SSH", "risk": "high", "explain": "Remote access port that lets someone control your computer from anywhere. If this is open unintentionally, it could let hackers in."},
-            "80": {"name": "HTTP", "risk": "medium", "explain": "A web server running without encryption. Any data sent through this port can be read by others on the network."},
-            "443": {"name": "HTTPS", "risk": "low", "explain": "A secure, encrypted web server. This is completely normal and safe to have open."},
-            "3000": {"name": "Dev Server", "risk": "low", "explain": "A local development server, probably running an app you are building. Safe as long as it is not exposed to the internet."},
-            "5000": {"name": "Dev Server", "risk": "low", "explain": "A local development server. Safe as long as it is not exposed to the internet."},
-            "5001": {"name": "Argus", "risk": "low", "explain": "This is Argus itself running. Completely normal."},
-            "8080": {"name": "Web Server", "risk": "medium", "explain": "An alternate web port. Check if you intentionally have a web server running here."},
-            "3306": {"name": "MySQL", "risk": "high", "explain": "Your database is listening for connections. If exposed to the internet, attackers could try to access all your data."},
-            "5432": {"name": "PostgreSQL", "risk": "high", "explain": "Your database is exposed. This should never be publicly accessible."},
-            "6379": {"name": "Redis", "risk": "high", "explain": "A cache server that is exposed. Attackers can use this to steal data or take over your system."},
+            "22": {"name": "SSH", "risk": "high", "explain": "Remote access port - could allow hackers in if misconfigured"},
+            "80": {"name": "HTTP", "risk": "medium", "explain": "Unencrypted web traffic - data sent here is not private"},
+            "443": {"name": "HTTPS", "risk": "low", "explain": "Encrypted web traffic - normal and safe"},
+            "3000": {"name": "Dev Server", "risk": "low", "explain": "A development server running locally"},
+            "5000": {"name": "Dev Server", "risk": "low", "explain": "A development server running locally"},
+            "5001": {"name": "Argus", "risk": "low", "explain": "This is Argus itself running"},
+            "8080": {"name": "Web Server", "risk": "medium", "explain": "An alternate web port - check if intentional"},
+            "3306": {"name": "MySQL", "risk": "high", "explain": "Database exposed - could be dangerous if public"},
+            "5432": {"name": "PostgreSQL", "risk": "high", "explain": "Database exposed - should not be public"},
+            "6379": {"name": "Redis", "risk": "high", "explain": "Cache server exposed - attackers can steal data"},
         }
         for line in result.stdout.split("\n")[1:]:
             parts = line.split()
@@ -61,7 +63,7 @@ def get_open_ports():
                 if "*:" in addr or "0.0.0.0:" in addr or "127.0.0.1:" in addr:
                     port = addr.split(":")[-1]
                     if port not in ports:
-                        info = risk_map.get(port, {"name": parts[0], "risk": "low", "explain": "A service is running on this port on your machine."})
+                        info = risk_map.get(port, {"name": parts[0], "risk": "low", "explain": "A service running on your machine"})
                         ports[port] = {"process": parts[0], **info}
         return [{"port": k, **v} for k, v in sorted(ports.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 9999)[:10]]
     except:
@@ -92,12 +94,9 @@ def get_cves():
                 score = metrics["cvssMetricV30"][0]["cvssData"].get("baseScore", 0)
                 score_str = str(score)
             cve_id = cve.get("id", "Unknown")
-            cves.append({
-                "id": cve_id, "score": score_str, "score_num": float(score),
-                "description": desc[:300],
-                "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-                "published": cve.get("published", "")[:10]
-            })
+            cves.append({"id": cve_id, "score": score_str, "score_num": float(score),
+                        "description": desc[:300], "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                        "published": cve.get("published", "")[:10]})
         return cves
     except:
         return []
@@ -120,7 +119,7 @@ def ai_explain(prompt):
     except:
         return None
 
-def compute_health(network, ports, cves, devices):
+def compute_health(network, ports, cves):
     score = 100
     issues = []
     good = []
@@ -133,14 +132,14 @@ def compute_health(network, ports, cves, devices):
     if high_risk_ports:
         score -= 10 * len(high_risk_ports)
         for p in high_risk_ports:
-            issues.append({"text": f"High-risk port open: {p['port']} ({p['name']})", "detail": p['explain'], "action": f"Close port {p['port']} if you do not need it running."})
+            issues.append({"text": f"High-risk port open: {p['port']} ({p['name']})", "detail": p["explain"], "action": f"Close port {p['port']} if you do not need it running."})
     else:
         good.append({"text": "No high-risk ports open", "detail": "None of your open ports pose an immediate security risk."})
     if cves:
         score -= min(20, len(cves) * 3)
-        issues.append({"text": f"{len(cves)} critical vulnerabilities published this week", "detail": "New security flaws have been discovered in widely used software. If you use affected software and have not updated it, you could be at risk.", "action": "Keep all your apps, operating system, and firmware up to date."})
+        issues.append({"text": f"{len(cves)} critical vulnerabilities published this week", "detail": "New security flaws discovered in widely used software. Keep everything updated.", "action": "Keep all your apps, operating system, and firmware up to date."})
     else:
-        good.append({"text": "No new critical threats this week", "detail": "No critical vulnerabilities have been published in the past 48 hours."})
+        good.append({"text": "No new critical threats this week", "detail": "No critical vulnerabilities published in the past 48 hours."})
     score = max(0, min(100, score))
     if score >= 80:
         grade_label = "Good"; grade_msg = "Your network looks healthy."
@@ -156,73 +155,140 @@ def api_data():
     ports = get_open_ports()
     cves = get_cves()
     devices = get_devices()
-    health = compute_health(network, ports, cves, devices)
+    health = compute_health(network, ports, cves)
     return jsonify({"network": network, "ports": ports, "cves": cves, "health": health, "devices": devices})
 
 @app.route("/api/explain/cve", methods=["POST"])
 def explain_cve():
-    try:
-        data = json.loads(urllib.request.urlopen(
-            urllib.request.Request(
-                "http://localhost:5001/api/data",
-                headers={"Content-Type": "application/json"}
-            )
-        ).read())
-    except:
-        pass
-    body = json.loads(urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:5001/api/explain/cve",
-                               method="POST")).read()) if False else {}
-    from flask import request
     body = request.get_json()
     cve_id = body.get("id", "")
     score = body.get("score", "")
     desc = body.get("description", "")
-    prompt = f"""Explain this security vulnerability to someone with no technical background. Use 2-3 short paragraphs.
-Paragraph 1: What is the problem and what could a hacker do with it?
-Paragraph 2: Who is at risk and how serious is it?
-Paragraph 3: What should a regular person do about it?
-Keep it simple, friendly, and under 120 words total. No jargon.
-
+    prompt = f"""Explain this security vulnerability to someone non-technical in 2-3 short paragraphs.
+Paragraph 1: What is the problem in simple terms.
+Paragraph 2: Who is affected and how serious is it.
+Paragraph 3: What should a regular person do about it.
+Keep it friendly, under 100 words total. No jargon.
 CVE: {cve_id} Score: {score}/10
 Details: {desc}"""
-    result = ai_explain(prompt)
-    if not result:
-        result = "This is a critical security vulnerability that could allow attackers to compromise affected systems. Keep your software updated to stay protected."
+    result = ai_explain(prompt) or "This is a critical security vulnerability. Keep your software updated to stay protected."
     return jsonify({"explanation": result})
 
 @app.route("/api/explain/network", methods=["POST"])
 def explain_network():
-    from flask import request
     body = request.get_json()
     network = body.get("network", {})
     ports = body.get("ports", [])
     high = [p for p in ports if p.get("risk") == "high"]
-    prompt = f"""Explain this person's network security situation in 2 short paragraphs. Be friendly and simple. No jargon.
-Their setup: WiFi={network.get('wifi','Unknown')}, VPN={'on' if network.get('vpn') else 'OFF - not protected'}, 
+    prompt = f"""Explain this network security situation in 2 short paragraphs. Friendly and simple. No jargon.
+Setup: WiFi={network.get('wifi','Unknown')}, VPN={'on' if network.get('vpn') else 'OFF'}, 
 Public IP={network.get('public_ip','Unknown')}, Open ports={len(ports)} total, {len(high)} high-risk.
-Paragraph 1: Overall situation - are they safe or not?
-Paragraph 2: The most important thing they should do right now.
-Keep it under 80 words."""
-    result = ai_explain(prompt)
-    if not result:
-        result = "Your network connection is active. Make sure you keep your VPN on and your software updated for best protection."
+Paragraph 1: Overall situation.
+Paragraph 2: Most important thing to do right now.
+Under 80 words."""
+    result = ai_explain(prompt) or "Your network is active. Keep your VPN on and software updated."
     return jsonify({"explanation": result})
 
 @app.route("/api/explain/device", methods=["POST"])
 def explain_device():
-    from flask import request
     body = request.get_json()
     hostname = body.get("hostname", "unknown")
     vendor = body.get("vendor", "Unknown")
     ip = body.get("ip", "")
-    prompt = f"""In 1-2 sentences, explain what kind of device this likely is on a home network and whether the user should be concerned about it.
+    prompt = f"""In 1-2 sentences, explain what kind of device this is on a home network and if the user should be concerned.
 Device: hostname={hostname}, vendor={vendor}, IP={ip}
-Be friendly and simple. If vendor is Unknown, make an educated guess based on hostname."""
-    result = ai_explain(prompt)
-    if not result:
-        result = "This is a device connected to your network. If you do not recognize it, consider changing your WiFi password."
+Be friendly and simple."""
+    result = ai_explain(prompt) or "This is a device on your network. If you do not recognize it, consider changing your WiFi password."
     return jsonify({"explanation": result})
+
+@app.route("/api/checkpassword", methods=["POST"])
+def check_password():
+    body = request.get_json()
+    password = body.get("password", "")
+    if not password:
+        return jsonify({"error": "No password provided"}), 400
+    try:
+        sha1 = hashlib.sha1(password.encode()).hexdigest().upper()
+        prefix, suffix = sha1[:5], sha1[5:]
+        url = f"https://api.pwnedpasswords.com/range/{prefix}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Argus-Security-Monitor", "Add-Padding": "true"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            hashes = r.read().decode()
+        count = 0
+        for line in hashes.splitlines():
+            parts = line.split(":")
+            if len(parts) == 2 and parts[0].strip() == suffix:
+                count = int(parts[1].strip())
+                break
+        if count == 0:
+            status = "safe"
+            summary = "Great news! This password has never appeared in any known data breach."
+            advice_prompt = "In 1 friendly sentence, tell someone their password is safe but remind them not to reuse it on multiple sites. Under 25 words."
+        elif count < 10:
+            status = "warning"
+            summary = f"This password appeared {count} time(s) in data breaches. You should change it."
+            advice_prompt = f"In 2 friendly sentences, explain why a password found {count} times in breach data should be changed. Simple language. Under 40 words."
+        elif count < 1000:
+            status = "high"
+            summary = f"This password appeared {count} times in data breaches. Change it immediately."
+            advice_prompt = f"In 2 friendly sentences, explain the danger of a password found {count} times in breach databases. Simple. Under 40 words."
+        else:
+            status = "critical"
+            summary = f"This password appeared {count:,} times in data breaches. It is extremely dangerous to use."
+            advice_prompt = f"In 2 urgent but friendly sentences, warn someone that a password seen {count:,} times in breaches is extremely dangerous. Simple. Under 40 words."
+        advice = ai_explain(advice_prompt) or summary
+        return jsonify({"status": status, "summary": summary, "count": count, "advice": advice, "safe": count == 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    body = request.get_json()
+    user_message = body.get("message", "").strip()
+    if not user_message:
+        return jsonify({"reply": "Please ask me something."}), 400
+
+    # Gather all current context
+    network = get_network_info()
+    ports = get_open_ports()
+    cves = get_cves()
+    devices = get_devices()
+    health = compute_health(network, ports, cves)
+
+    high_ports = [p for p in ports if p.get("risk") == "high"]
+    cve_summary = ", ".join([c["id"] + " (score " + c["score"] + ")" for c in cves[:5]]) if cves else "none"
+    device_summary = ", ".join([d.get("hostname","unknown") + " (" + d.get("ip","") + ")" for d in devices[:8]]) if devices else "none scanned yet"
+
+    context = f"""You are Argus, a friendly personal security assistant. You have full access to this user's network data.
+
+CURRENT NETWORK STATUS:
+- Security health score: {health["score"]}/100 ({health["grade_label"]})
+- WiFi: {network.get("wifi","Unknown")}
+- Local IP: {network.get("local_ip","Unknown")}
+- Public IP: {network.get("public_ip","Unknown")}
+- VPN: {"ACTIVE - traffic is encrypted" if network.get("vpn") else "OFF - traffic is not encrypted"}
+- Open ports: {len(ports)} total, {len(high_ports)} high-risk
+- High-risk ports: {", ".join([p["port"] + " (" + p["name"] + ")" for p in high_ports]) if high_ports else "none"}
+- Critical CVEs this week: {len(cves)} ({cve_summary})
+- Devices on network: {device_summary}
+- Issues found: {", ".join([i["text"] for i in health["issues"]]) if health["issues"] else "none"}
+
+RULES:
+- Answer in plain English that anyone can understand
+- Be friendly, clear, and concise
+- Use the actual data above to give specific answers
+- If asked about something not in your data, say so honestly
+- Keep responses under 100 words unless the question needs more detail
+- Never use technical jargon without explaining it
+
+USER QUESTION: {user_message}"""
+
+    reply = ai_explain(context)
+    if not reply:
+        reply = "I'm having trouble connecting to the AI right now. Make sure Ollama is running with: ollama serve"
+
+    return jsonify({"reply": reply})
 
 @app.route("/")
 def index():
@@ -250,7 +316,6 @@ body.light nav{background:rgba(245,245,247,0.85)}
 #clock{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums}
 .btn{background:var(--s1);border:1px solid var(--bd);color:var(--t2);font-family:inherit;font-size:12px;font-weight:500;padding:5px 12px;border-radius:20px;cursor:pointer;transition:all .15s}
 .btn:hover{background:var(--s2);border-color:var(--bd2);color:var(--t1)}
-.theme-btn{font-size:14px;padding:4px 10px}
 main{max-width:960px;margin:0 auto;padding:28px 24px 60px}
 .health-card{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:24px 28px;margin-bottom:20px;display:flex;align-items:center;gap:24px}
 .score-ring{position:relative;width:80px;height:80px;flex-shrink:0}
@@ -260,15 +325,13 @@ main{max-width:960px;margin:0 auto;padding:28px 24px 60px}
 .score-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600;letter-spacing:-.03em}
 .health-text h2{font-size:18px;font-weight:600;letter-spacing:-.02em;margin-bottom:2px}
 .health-text p{font-size:13px;color:var(--t2)}
-.ai-explain-box{margin-top:10px;font-size:13px;color:var(--t2);line-height:1.6;font-style:italic}
 .tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--s1);padding:4px;border-radius:12px;border:1px solid var(--bd)}
 .tab{flex:1;padding:8px;border-radius:9px;font-size:13px;font-weight:500;text-align:center;cursor:pointer;color:var(--t2);transition:all .2s;border:none;background:none;font-family:inherit}
 .tab.active{background:var(--s2);color:var(--t1);border:1px solid var(--bd2)}
 .tab-content{display:none}
 .tab-content.active{display:block}
 .section-title{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);margin:24px 0 12px}
-.card{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:20px 22px;margin-bottom:12px;transition:border-color .2s}
-.card:hover{border-color:var(--bd2)}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:20px 22px;margin-bottom:12px}
 .card-title{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t3);margin-bottom:14px}
 .row{display:flex;align-items:flex-start;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--bd);gap:12px}
 .row:last-child{border-bottom:none}
@@ -282,7 +345,6 @@ main{max-width:960px;margin:0 auto;padding:28px 24px 60px}
 .b-orange{background:rgba(255,159,10,.15);color:#ffb340}
 .b-green{background:rgba(48,209,88,.12);color:#34c759}
 .b-gray{background:rgba(128,128,128,.15);color:var(--t2)}
-.b-blue{background:rgba(41,151,255,.15);color:#64aaff}
 .status-item{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:14px 18px;display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
 .si-icon{font-size:16px;flex-shrink:0;margin-top:1px}
 .si-body{flex:1}
@@ -293,22 +355,21 @@ main{max-width:960px;margin:0 auto;padding:28px 24px 60px}
 .port-row{display:flex;align-items:flex-start;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd);gap:12px}
 .port-row:last-child{border-bottom:none}
 .port-left{flex:1}
-.port-num{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--t1)}
-.port-name{font-size:12px;color:var(--t2)}
-.port-explain{font-size:12px;color:var(--t2);margin-top:4px;line-height:1.4}
-.device-row{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;display:flex;align-items:flex-start;gap:12px;margin-bottom:8px;transition:border-color .2s;cursor:pointer}
+.port-num{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.port-explain{font-size:12px;color:var(--t2);margin-top:3px;line-height:1.4}
+.device-row{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;display:flex;align-items:flex-start;gap:12px;margin-bottom:8px;cursor:pointer}
 .device-row:hover{border-color:var(--bd2)}
 .device-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;background:var(--s2)}
 .device-info{flex:1}
 .device-name{font-size:13px;font-weight:500}
-.device-meta{font-size:11px;color:var(--t3);margin-top:2px;font-variant-numeric:tabular-nums}
-.device-vendor{font-size:12px;color:var(--t2);text-align:right}
+.device-meta{font-size:11px;color:var(--t3);margin-top:2px}
+.device-vendor{font-size:12px;color:var(--t2);flex-shrink:0}
 .device-ai{font-size:12px;color:var(--t2);margin-top:8px;font-style:italic;line-height:1.5;display:none}
 .you-tag{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:600;background:rgba(41,151,255,.15);color:#64aaff;margin-left:6px}
-.cve-card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;margin-bottom:10px;cursor:pointer;transition:border-color .2s}
+.cve-card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;margin-bottom:10px;cursor:pointer}
 .cve-card:hover{border-color:var(--bd2)}
 .cve-top{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
-.cve-id{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums}
+.cve-id{font-size:12px;color:var(--t3)}
 .cve-date{font-size:11px;color:var(--t3);margin-left:auto}
 .cve-desc{font-size:13px;color:var(--t2);line-height:1.5}
 .cve-ai{font-size:13px;color:var(--t1);margin-top:12px;line-height:1.6;display:none;border-top:1px solid var(--bd);padding-top:12px}
@@ -318,6 +379,10 @@ main{max-width:960px;margin:0 auto;padding:28px 24px 60px}
 .score-pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
 .pill-c{background:rgba(255,69,58,.15);color:#ff6961}
 .pill-h{background:rgba(255,159,10,.15);color:#ffb340}
+.pw-input{width:100%;background:var(--s1);border:1px solid var(--bd2);border-radius:10px;padding:10px 14px;color:var(--t1);font-family:inherit;font-size:14px;outline:none;margin-bottom:12px}
+.pw-input:focus{border-color:var(--blue)}
+.check-btn{background:var(--blue);border:none;color:#fff;font-family:inherit;font-size:14px;font-weight:500;padding:10px 24px;border-radius:10px;cursor:pointer;transition:opacity .15s}
+.check-btn:hover{opacity:.85}
 .spin{display:inline-block;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading{font-size:13px;color:var(--t3);padding:8px 0}
@@ -331,25 +396,22 @@ footer{border-top:1px solid var(--bd);padding:14px 28px;display:flex;justify-con
   <div class="nav-r">
     <span class="live"><span class="dot"></span>Live</span>
     <span id="clock">--:--:--</span>
-    <button class="btn theme-btn" onclick="toggleTheme()" id="theme-btn">Light</button>
+    <button class="btn" onclick="toggleTheme()" id="theme-btn">Light</button>
     <button class="btn" onclick="loadAll()">Refresh</button>
   </div>
 </nav>
-
 <main>
   <div id="health-wrap"><div class="health-card"><div class="loading">Checking your network...</div></div></div>
-
   <div class="tabs">
     <button class="tab active" onclick="switchTab('overview')">Overview</button>
     <button class="tab" onclick="switchTab('network')">Network</button>
     <button class="tab" onclick="switchTab('devices')">Devices</button>
     <button class="tab" onclick="switchTab('threats')">Threats</button>
+    <button class="tab" onclick="switchTab('password')">Password Check</button>
   </div>
-
   <div id="tab-overview" class="tab-content active">
     <div id="status-items"></div>
   </div>
-
   <div id="tab-network" class="tab-content">
     <div class="grid2">
       <div class="card"><div class="card-title">Your Connection</div><div id="net-info"><div class="loading">Loading...</div></div></div>
@@ -357,168 +419,186 @@ footer{border-top:1px solid var(--bd);padding:14px 28px;display:flex;justify-con
     </div>
     <div class="card"><div class="card-title">AI Network Summary</div><div id="net-ai"><div class="loading"><span class="spin">&#9696;</span> Analyzing...</div></div></div>
   </div>
-
   <div id="tab-devices" class="tab-content">
-    <div class="section-title" id="device-count">Scanning...</div>
+    <div class="section-title" id="device-count">Loading...</div>
     <div id="device-list"><div class="loading">Loading devices...</div></div>
   </div>
-
   <div id="tab-threats" class="tab-content">
     <div class="section-title">Critical vulnerabilities published in the past 48 hours</div>
     <div id="cve-list"><div class="loading">Fetching from National Vulnerability Database...</div></div>
   </div>
+  <div id="tab-password" class="tab-content">
+    <div style="max-width:520px;margin:0 auto;padding:8px 0">
+      <div style="font-size:22px;font-weight:600;letter-spacing:-.02em;margin-bottom:8px">Password Checker</div>
+      <div style="font-size:14px;color:var(--t2);margin-bottom:6px;line-height:1.5">Check if your password has appeared in known data breaches. Your password is never sent anywhere — only a partial hash is checked using k-anonymity.</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:20px">Powered by HaveIBeenPwned</div>
+      <input id="pw-input" class="pw-input" type="password" placeholder="Enter a password to check" onkeydown="if(event.key==='Enter')checkPassword()"/>
+      <button class="check-btn" onclick="checkPassword()" id="pw-btn">Check Password</button>
+      <div id="pw-result" style="margin-top:20px"></div>
+    </div>
+  </div>
 </main>
-
 <footer>
   <span class="ft">Argus - Built by Aryan Khanna, Purdue University</span>
   <span class="ft" id="upd">-</span>
 </footer>
 
+<!-- AI Chat -->
+<div id="chat-container" style="position:fixed;bottom:24px;right:24px;z-index:1000;width:380px;font-family:inherit">
+  <div id="chat-box" style="display:none;background:var(--bg2,#111);border:1px solid var(--bd2);border-radius:20px;box-shadow:0 8px 32px rgba(0,0,0,0.4);overflow:hidden;margin-bottom:12px;max-height:480px;display:none;flex-direction:column">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:13px;font-weight:600">Ask Argus</div>
+        <div style="font-size:11px;color:var(--t3)">Your AI security advisor</div>
+      </div>
+      <button onclick="toggleChat()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:18px;padding:4px">&#10005;</button>
+    </div>
+    <div id="chat-messages" style="flex:1;overflow-y:auto;padding:14px 18px;max-height:320px;display:flex;flex-direction:column;gap:10px">
+      <div class="msg-argus" style="background:var(--s1);border-radius:12px 12px 12px 4px;padding:10px 14px;font-size:13px;color:var(--t2);line-height:1.5;max-width:90%">
+        Hi! I am Argus, your personal security advisor. Ask me anything about your network, devices, or threats. For example: "Is my network safe?" or "What should I do first?"
+      </div>
+    </div>
+    <div style="padding:12px 14px;border-top:1px solid var(--bd);display:flex;gap:8px">
+      <input id="chat-input" placeholder="Ask me anything..." style="flex:1;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:8px 12px;color:var(--t1);font-family:inherit;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')sendChat()"/>
+      <button onclick="sendChat()" style="background:var(--blue,#2997ff);border:none;color:#fff;font-family:inherit;font-size:13px;font-weight:500;padding:8px 14px;border-radius:10px;cursor:pointer;white-space:nowrap">Send</button>
+    </div>
+    <div style="padding:0 14px 10px;display:flex;flex-wrap:wrap;gap:6px">
+      <button onclick="quickAsk('Is my network safe right now?')" style="background:var(--s1);border:1px solid var(--bd);color:var(--t2);font-family:inherit;font-size:11px;padding:4px 10px;border-radius:20px;cursor:pointer">Is my network safe?</button>
+      <button onclick="quickAsk('What is the most important thing I should do today?')" style="background:var(--s1);border:1px solid var(--bd);color:var(--t2);font-family:inherit;font-size:11px;padding:4px 10px;border-radius:20px;cursor:pointer">Top priority?</button>
+      <button onclick="quickAsk('What devices are on my network and should I be worried?')" style="background:var(--s1);border:1px solid var(--bd);color:var(--t2);font-family:inherit;font-size:11px;padding:4px 10px;border-radius:20px;cursor:pointer">My devices</button>
+      <button onclick="quickAsk('Explain the latest threats in simple terms')" style="background:var(--s1);border:1px solid var(--bd);color:var(--t2);font-family:inherit;font-size:11px;padding:4px 10px;border-radius:20px;cursor:pointer">Latest threats</button>
+    </div>
+  </div>
+  <button onclick="toggleChat()" id="chat-toggle" style="width:52px;height:52px;border-radius:50%;background:var(--blue,#2997ff);border:none;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 4px 16px rgba(41,151,255,0.4);display:flex;align-items:center;justify-content:center;margin-left:auto;transition:transform .2s" onmouseover="this.style.transform='scale(1.08)'" onmouseout="this.style.transform='scale(1)'">&#x1F916;</button>
+</div>
 <script>
 var DATA = {};
-var currentTab = 'overview';
-
 function toggleTheme(){
   document.body.classList.toggle('light');
-  document.getElementById('theme-btn').textContent = document.body.classList.contains('light') ? 'Dark' : 'Light';
+  document.getElementById('theme-btn').textContent=document.body.classList.contains('light')?'Dark':'Light';
 }
-
 function switchTab(t){
-  currentTab = t;
-  document.querySelectorAll('.tab').forEach(function(el,i){
-    var tabs = ['overview','network','devices','threats'];
-    el.classList.toggle('active', tabs[i]===t);
-  });
-  document.querySelectorAll('.tab-content').forEach(function(el){
-    el.classList.remove('active');
-  });
+  var tabs=['overview','network','devices','threats','password'];
+  document.querySelectorAll('.tab').forEach(function(el,i){el.classList.toggle('active',tabs[i]===t);});
+  document.querySelectorAll('.tab-content').forEach(function(el){el.classList.remove('active');});
   document.getElementById('tab-'+t).classList.add('active');
 }
-
 setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-US',{hour12:false});},1000);
 document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-US',{hour12:false});
-
 function scoreColor(s){return s>=80?'#30d158':s>=55?'#ffd60a':'#ff453a';}
-
-function deviceIcon(vendor,hostname){
-  var v=(vendor||'').toLowerCase(), h=(hostname||'').toLowerCase();
-  if(v.includes('apple')||h.includes('iphone')||h.includes('macbook')||h.includes('ipad')) return '&#x1F4BB;';
+function deviceIcon(v,h){
+  v=(v||'').toLowerCase();h=(h||'').toLowerCase();
+  if(v.includes('apple')||h.includes('iphone')||h.includes('mac')||h.includes('ipad')) return '&#x1F4BB;';
   if(v.includes('samsung')||v.includes('android')) return '&#x1F4F1;';
-  if(v.includes('intel')||v.includes('msi')||v.includes('dell')||v.includes('hp')||v.includes('lenovo')||v.includes('asus')) return '&#x1F5A5;';
+  if(v.includes('intel')||v.includes('msi')||v.includes('dell')||v.includes('hp')||v.includes('lenovo')) return '&#x1F5A5;';
   if(v.includes('calix')||v.includes('eero')||v.includes('netgear')||v.includes('linksys')||h.includes('router')) return '&#x1F4E1;';
   if(v.includes('amazon')||h.includes('echo')||h.includes('ring')) return '&#x1F50A;';
   return '&#x1F4BB;';
 }
-
-function renderHealth(health){
-  var c=scoreColor(health.score);
-  var radius=34, circ=2*Math.PI*radius, offset=circ-(health.score/100)*circ;
-  document.getElementById('health-wrap').innerHTML='<div class="health-card"><div class="score-ring"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="'+radius+'"/><circle class="fill" cx="40" cy="40" r="'+radius+'" stroke="'+c+'" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"/></svg><div class="score-num" style="color:'+c+'">'+health.score+'</div></div><div class="health-text"><h2>'+health.grade_label+'</h2><p>'+health.grade_msg+'</p></div></div>';
-}
-
-function renderOverview(health){
-  var html='';
-  health.issues.forEach(function(i){
-    html+='<div class="status-item"><div class="si-icon">&#9888;</div><div class="si-body"><div class="si-title">'+i.text+'</div><div class="si-detail">'+i.detail+'</div><div class="si-action">What to do: '+i.action+'</div></div></div>';
-  });
-  health.good.forEach(function(g){
-    html+='<div class="status-item si-good"><div class="si-icon">&#10003;</div><div class="si-body"><div class="si-title">'+g.text+'</div><div class="si-detail">'+g.detail+'</div></div></div>';
-  });
-  document.getElementById('status-items').innerHTML=html;
-}
-
-function renderNetwork(network,ports){
-  document.getElementById('net-info').innerHTML='<div class="row"><span class="rk">Wi-Fi Network</span><span class="rv">'+network.wifi+'</span></div><div class="row"><span class="rk">Local IP</span><span class="rv">'+network.local_ip+'</span></div><div class="row"><span class="rk">Public IP</span><span class="rv">'+network.public_ip+'</span></div><div class="row"><span class="rk">VPN</span><span class="rv '+(network.vpn?'vpn-on':'vpn-off')+'">'+(network.vpn?'Active':'Off')+'</span></div>';
-
-  if(!ports.length){document.getElementById('port-info').innerHTML='<div class="loading">No open ports detected</div>';return;}
-  var ph='';
-  ports.forEach(function(p){
-    var bc=p.risk==='high'?'b-red':p.risk==='medium'?'b-orange':'b-green';
-    var bl=p.risk==='high'?'High Risk':p.risk==='medium'?'Monitor':'Safe';
-    ph+='<div class="port-row"><div class="port-left"><div class="port-num">'+p.port+' <span class="port-name">'+( p.name||p.process)+'</span></div><div class="port-explain">'+p.explain+'</div></div><span class="badge '+bc+'">'+bl+'</span></div>';
-  });
-  document.getElementById('port-info').innerHTML=ph;
-
-  fetch('/api/explain/network',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({network:network,ports:ports})})
-    .then(function(r){return r.json();})
-    .then(function(d){document.getElementById('net-ai').innerHTML='<p style="font-size:13px;line-height:1.6;color:var(--t2)">'+d.explanation+'</p>';})
-    .catch(function(){document.getElementById('net-ai').innerHTML='<p class="loading">AI explanation unavailable</p>';});
-}
-
-function renderDevices(devices, localIp){
-  if(!devices||!devices.length){
-    document.getElementById('device-list').innerHTML='<div class="card"><p class="loading">No scan data. Run the scanner from terminal first.</p></div>';
-    document.getElementById('device-count').textContent='No devices found';
-    return;
-  }
-  document.getElementById('device-count').textContent=devices.length+' devices on your network - click any device for an AI explanation';
-  var html='';
-  devices.forEach(function(dev,idx){
-    var isYou=dev.ip===localIp;
-    var icon=deviceIcon(dev.vendor,dev.hostname);
-    html+='<div class="device-row" onclick="explainDevice('+idx+')" id="drow-'+idx+'">';
-    html+='<div class="device-icon">'+icon+'</div>';
-    html+='<div class="device-info">';
-    html+='<div class="device-name">'+dev.hostname+(isYou?'<span class="you-tag">You</span>':'')+'</div>';
-    html+='<div class="device-meta">'+dev.ip+' &nbsp;|&nbsp; '+dev.mac+'</div>';
-    html+='<div class="device-ai" id="dai-'+idx+'"></div>';
-    html+='</div>';
-    html+='<div class="device-vendor">'+(dev.vendor&&dev.vendor!=='Unknown'?dev.vendor:'Unknown')+'</div>';
-    html+='</div>';
-  });
-  document.getElementById('device-list').innerHTML=html;
-}
-
-function explainDevice(idx){
-  var box=document.getElementById('dai-'+idx);
-  if(box.style.display==='block'){box.style.display='none';return;}
-  box.style.display='block';
-  box.innerHTML='<span class="spin">&#9696;</span> Asking AI...';
-  var dev=DATA.devices[idx];
-  fetch('/api/explain/device',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dev)})
-    .then(function(r){return r.json();})
-    .then(function(d){box.innerHTML=d.explanation;})
-    .catch(function(){box.innerHTML='Could not get AI explanation right now.';});
-}
-
-function renderCVEs(cves){
-  if(!cves.length){document.getElementById('cve-list').innerHTML='<div class="card"><p style="color:var(--t2);font-size:14px">No critical threats in the past 48 hours - you are all clear.</p></div>';return;}
-  var html='';
-  cves.forEach(function(cv,idx){
-    var isc=parseFloat(cv.score)>=9;
-    html+='<div class="cve-card" onclick="expandCVE('+idx+')" id="cve-'+idx+'">';
-    html+='<div class="cve-top"><span class="score-pill '+(isc?'pill-c':'pill-h')+'">'+(isc?'Critical':'High')+' '+cv.score+'/10</span><span class="cve-id">'+cv.id+'</span><span class="cve-date">'+cv.published+'</span></div>';
-    html+='<div class="cve-desc">'+cv.description+'</div>';
-    html+='<div class="cve-ai" id="cai-'+idx+'"><div class="cve-ai-label">AI Explanation</div><div id="cai-text-'+idx+'"></div></div>';
-    html+='<a class="cve-link" href="'+cv.url+'" target="_blank" onclick="event.stopPropagation()">View technical details &rarr;</a>';
-    html+='</div>';
-  });
-  document.getElementById('cve-list').innerHTML=html;
-}
-
-function expandCVE(idx){
-  var aiBox=document.getElementById('cai-'+idx);
-  var textBox=document.getElementById('cai-text-'+idx);
-  if(aiBox.style.display==='block'){aiBox.style.display='none';return;}
-  aiBox.style.display='block';
-  textBox.innerHTML='<span class="spin">&#9696;</span> AI is explaining this...';
-  var cv=DATA.cves[idx];
-  fetch('/api/explain/cve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cv)})
-    .then(function(r){return r.json();})
-    .then(function(d){textBox.innerHTML=d.explanation;})
-    .catch(function(){textBox.innerHTML='Could not get AI explanation right now.';});
-}
-
 function loadAll(){
   fetch('/api/data').then(function(r){return r.json();}).then(function(d){
     DATA=d;
-    renderHealth(d.health);
-    renderOverview(d.health);
-    renderNetwork(d.network,d.ports);
-    renderDevices(d.devices,d.network.local_ip);
-    renderCVEs(d.cves);
+    var c=scoreColor(d.health.score);
+    var radius=34,circ=2*Math.PI*radius,offset=circ-(d.health.score/100)*circ;
+    document.getElementById('health-wrap').innerHTML='<div class="health-card"><div class="score-ring"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="'+radius+'"/><circle class="fill" cx="40" cy="40" r="'+radius+'" stroke="'+c+'" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"/></svg><div class="score-num" style="color:'+c+'">'+d.health.score+'</div></div><div class="health-text"><h2>'+d.health.grade_label+'</h2><p>'+d.health.grade_msg+'</p></div></div>';
+    var sl='';
+    d.health.issues.forEach(function(i){sl+='<div class="status-item"><div class="si-icon">&#9888;</div><div class="si-body"><div class="si-title">'+i.text+'</div><div class="si-detail">'+i.detail+'</div><div class="si-action">What to do: '+i.action+'</div></div></div>';});
+    d.health.good.forEach(function(g){sl+='<div class="status-item si-good"><div class="si-icon">&#10003;</div><div class="si-body"><div class="si-title">'+g.text+'</div><div class="si-detail">'+g.detail+'</div></div></div>';});
+    document.getElementById('status-items').innerHTML=sl;
+    document.getElementById('net-info').innerHTML='<div class="row"><span class="rk">Wi-Fi</span><span class="rv">'+d.network.wifi+'</span></div><div class="row"><span class="rk">Local IP</span><span class="rv">'+d.network.local_ip+'</span></div><div class="row"><span class="rk">Public IP</span><span class="rv">'+d.network.public_ip+'</span></div><div class="row"><span class="rk">VPN</span><span class="rv '+(d.network.vpn?'vpn-on':'vpn-off')+'">'+(d.network.vpn?'Active':'Off')+'</span></div>';
+    if(!d.ports.length){document.getElementById('port-info').innerHTML='<div class="loading">No open ports</div>';}
+    else{var ph='';d.ports.forEach(function(p){var bc=p.risk==='high'?'b-red':p.risk==='medium'?'b-orange':'b-green';var bl=p.risk==='high'?'High Risk':p.risk==='medium'?'Monitor':'Safe';ph+='<div class="port-row"><div class="port-left"><div class="port-num">'+p.port+' <span style="color:var(--t2);font-weight:400">'+(p.name||p.process)+'</span></div><div class="port-explain">'+p.explain+'</div></div><span class="badge '+bc+'">'+bl+'</span></div>';});document.getElementById('port-info').innerHTML=ph;}
+    fetch('/api/explain/network',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({network:d.network,ports:d.ports})}).then(function(r){return r.json();}).then(function(r){document.getElementById('net-ai').innerHTML='<p style="font-size:13px;line-height:1.6;color:var(--t2)">'+r.explanation+'</p>';}).catch(function(){document.getElementById('net-ai').innerHTML='<p class="loading">AI unavailable</p>';});
+    if(!d.devices||!d.devices.length){document.getElementById('device-list').innerHTML='<div class="card"><p class="loading">No scan data. Run scanner.py from terminal first.</p></div>';document.getElementById('device-count').textContent='No devices found';}
+    else{
+      document.getElementById('device-count').textContent=d.devices.length+' devices on your network - click any for AI explanation';
+      var dh='';
+      d.devices.forEach(function(dev,idx){
+        var isYou=dev.ip===d.network.local_ip;
+        dh+='<div class="device-row" onclick="explainDevice('+idx+')" id="drow-'+idx+'"><div class="device-icon">'+deviceIcon(dev.vendor,dev.hostname)+'</div><div class="device-info"><div class="device-name">'+dev.hostname+(isYou?'<span class="you-tag">You</span>':'')+'</div><div class="device-meta">'+dev.ip+' | '+dev.mac+'</div><div class="device-ai" id="dai-'+idx+'"></div></div><div class="device-vendor">'+(dev.vendor&&dev.vendor!=='Unknown'?dev.vendor:'Unknown')+'</div></div>';
+      });
+      document.getElementById('device-list').innerHTML=dh;
+    }
+    if(!d.cves.length){document.getElementById('cve-list').innerHTML='<div class="card"><p style="color:var(--t2)">No critical threats in the past 48 hours.</p></div>';}
+    else{var ch='';d.cves.forEach(function(cv,idx){var isc=parseFloat(cv.score)>=9;ch+='<div class="cve-card" onclick="expandCVE('+idx+')" id="cve-'+idx+'"><div class="cve-top"><span class="score-pill '+(isc?'pill-c':'pill-h')+'">'+(isc?'Critical':'High')+' '+cv.score+'/10</span><span class="cve-id">'+cv.id+'</span><span class="cve-date">'+cv.published+'</span></div><div class="cve-desc">'+cv.description+'</div><div class="cve-ai" id="cai-'+idx+'"><div class="cve-ai-label">AI Explanation</div><div id="cai-text-'+idx+'"></div></div><a class="cve-link" href="'+cv.url+'" target="_blank" onclick="event.stopPropagation()">View technical details</a></div>';});document.getElementById('cve-list').innerHTML=ch;}
     document.getElementById('upd').textContent='Updated '+new Date().toLocaleTimeString();
   }).catch(function(e){console.error(e);});
+}
+function explainDevice(idx){
+  var box=document.getElementById('dai-'+idx);
+  if(box.style.display==='block'){box.style.display='none';return;}
+  box.style.display='block';box.innerHTML='<span class="spin">&#9696;</span> Asking AI...';
+  fetch('/api/explain/device',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DATA.devices[idx])}).then(function(r){return r.json();}).then(function(d){box.innerHTML=d.explanation;}).catch(function(){box.innerHTML='Could not get explanation.';});
+}
+function expandCVE(idx){
+  var ai=document.getElementById('cai-'+idx);var txt=document.getElementById('cai-text-'+idx);
+  if(ai.style.display==='block'){ai.style.display='none';return;}
+  ai.style.display='block';txt.innerHTML='<span class="spin">&#9696;</span> AI is explaining this...';
+  fetch('/api/explain/cve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DATA.cves[idx])}).then(function(r){return r.json();}).then(function(d){txt.innerHTML=d.explanation;}).catch(function(){txt.innerHTML='Could not get explanation.';});
+}
+function checkPassword(){
+  var pw=document.getElementById('pw-input').value;
+  if(!pw){alert('Please enter a password');return;}
+  document.getElementById('pw-btn').textContent='Checking...';
+  document.getElementById('pw-result').innerHTML='<div class="loading"><span class="spin">&#9696;</span> Checking against breach database...</div>';
+  fetch('/api/checkpassword',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})}).then(function(r){return r.json();}).then(function(d){
+    document.getElementById('pw-btn').textContent='Check Password';
+    if(d.error){document.getElementById('pw-result').innerHTML='<p style="color:var(--red)">'+d.error+'</p>';return;}
+    var statusColor=d.status==='safe'?'var(--green)':d.status==='critical'||d.status==='high'?'var(--red)':'var(--orange)';
+    var borderColor=d.safe?'rgba(48,209,88,.3)':'rgba(255,69,58,.3)';
+    var icon=d.safe?'&#10003;':'&#9888;';
+    var html='<div style="background:var(--s1);border:1px solid '+borderColor+';border-radius:14px;padding:20px 22px">';
+    html+='<div style="font-size:15px;font-weight:600;color:'+statusColor+';margin-bottom:10px">'+icon+' '+d.summary+'</div>';
+    html+='<div style="font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:12px">'+d.advice+'</div>';
+    if(!d.safe){html+='<div style="font-size:12px;color:var(--t3);border-top:1px solid var(--bd);padding-top:10px">Use a password manager like 1Password or Bitwarden to generate unique strong passwords for every site.</div>';}
+    html+='</div>';
+    document.getElementById('pw-result').innerHTML=html;
+  }).catch(function(){document.getElementById('pw-btn').textContent='Check Password';document.getElementById('pw-result').innerHTML='<p style="color:var(--red)">Could not check. Try again.</p>';});
+}
+
+var chatOpen = false;
+function toggleChat(){
+  chatOpen = !chatOpen;
+  var box = document.getElementById('chat-box');
+  box.style.display = chatOpen ? 'flex' : 'none';
+  if(chatOpen) document.getElementById('chat-input').focus();
+}
+function quickAsk(msg){
+  document.getElementById('chat-input').value = msg;
+  sendChat();
+}
+function addMessage(text, isUser){
+  var messages = document.getElementById('chat-messages');
+  var div = document.createElement('div');
+  div.style.cssText = isUser
+    ? 'background:rgba(41,151,255,0.15);border-radius:12px 12px 4px 12px;padding:10px 14px;font-size:13px;color:var(--t1);line-height:1.5;max-width:90%;align-self:flex-end;margin-left:auto'
+    : 'background:var(--s1);border-radius:12px 12px 12px 4px;padding:10px 14px;font-size:13px;color:var(--t2);line-height:1.5;max-width:90%';
+  div.textContent = text;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+function sendChat(){
+  var input = document.getElementById('chat-input');
+  var msg = input.value.trim();
+  if(!msg) return;
+  input.value = '';
+  addMessage(msg, true);
+  var thinking = addMessage('Thinking...', false);
+  thinking.style.color = 'var(--t3)';
+  thinking.style.fontStyle = 'italic';
+  fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      thinking.textContent = d.reply;
+      thinking.style.color = 'var(--t2)';
+      thinking.style.fontStyle = 'normal';
+      document.getElementById('chat-messages').scrollTop = 999999;
+    })
+    .catch(function(){
+      thinking.textContent = 'Could not reach AI. Make sure Ollama is running.';
+      thinking.style.color = 'var(--red)';
+    });
 }
 
 loadAll();
