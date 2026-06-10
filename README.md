@@ -4,6 +4,27 @@
 
 ---
 
+## Run the dashboard
+
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Start Argus:
+   ```bash
+   python app.py
+   ```
+3. Open the dashboard in your browser:
+   ```
+   http://localhost:5001
+   ```
+
+## Notes
+
+- The app uses `templates/index.html` and static CSS/JS assets under `static/`.
+- Cache refresh interval is controlled by `ARGUS_CACHE_TTL` (seconds).
+
+
 ## What It Does
 
 Argus is a personal security monitoring tool built for your Mac. It runs in your terminal (and eventually as a web UI) and gives you a live view of:

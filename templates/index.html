@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Argus</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Argus</p>
+        <h1>Personal Mac security dashboard</h1>
+        <p class="hero-copy">Monitor VPN state, local network posture, open services, device discovery, and trending critical CVEs in one clean view.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" class="btn btn-primary">Refresh</button>
+        <span id="refreshStatus" class="status-pill">Loading…</span>
+      </div>
+    </header>
+
+    <section class="row-grid">
+      <article class="card stat-card">
+        <span class="card-label">Security score</span>
+        <h2 id="healthScore">—</h2>
+        <p id="healthLabel" class="status-text">—</p>
+      </article>
+      <article class="card quick-card">
+        <span class="card-label">VPN</span>
+        <p id="vpnState" class="quick-value">—</p>
+        <span id="vpnBadge" class="badge badge-neutral">—</span>
+      </article>
+      <article class="card quick-card">
+        <span class="card-label">Device count</span>
+        <p id="deviceCount" class="quick-value">—</p>
+      </article>
+      <article class="card quick-card">
+        <span class="card-label">Open ports</span>
+        <p id="portCount" class="quick-value">—</p>
+      </article>
+      <article class="card quick-card">
+        <span class="card-label">Critical CVEs</span>
+        <p id="cveCount" class="quick-value">—</p>
+      </article>
+    </section>
+
+    <section class="section-header">
+      <div>
+        <h2>Network snapshot</h2>
+        <p class="section-copy">Live network details and connectivity status for this host.</p>
+      </div>
+      <p class="small-text" id="lastUpdated">Updated —</p>
+    </section>
+
+    <section class="grid-2">
+      <article class="card info-card">
+        <h3>Connection details</h3>
+        <dl>
+          <dt>Local IP</dt><dd id="localIp">—</dd>
+          <dt>Public IP</dt><dd id="publicIp">—</dd>
+          <dt>Wi-Fi</dt><dd id="wifiName">—</dd>
+          <dt>VPN interface</dt><dd id="vpnInterface">—</dd>
+        </dl>
+      </article>
+      <article class="card chart-card">
+        <h3>Threat posture</h3>
+        <canvas id="riskChart" height="180"></canvas>
+      </article>
+    </section>
+
+    <section class="grid-2">
+      <article class="card table-card">
+        <div class="table-header"><h3>Open ports</h3><p>Listening services that may expose your Mac.</p></div>
+        <div id="portsTable">Loading ports…</div>
+      </article>
+      <article class="card table-card">
+        <div class="table-header"><h3>Critical CVEs</h3><p>Recent severe vulnerabilities from NVD.</p></div>
+        <div id="cvesTable">Loading CVEs…</div>
+      </article>
+    </section>
+
+    <section class="card device-card">
+      <div class="table-header"><h3>Discovered devices</h3><p>Results from scanner data if available.</p></div>
+      <div id="devicesTable">Loading device scan results…</div>
+    </section>
+  </main>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
